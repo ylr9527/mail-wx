@@ -2,7 +2,8 @@ import os
 import imaplib
 import email
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader, APIKey
 from dotenv import load_dotenv
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,18 @@ beijing_tz = pytz.timezone('Asia/Shanghai')
 CHECK_INTERVAL = 300  # 5分钟检查一次
 
 app = FastAPI()
+
+# API密钥验证
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == os.getenv("API_KEY"):
+        return api_key_header
+    raise HTTPException(
+        status_code=403,
+        detail="无效的API密钥"
+    )
 
 def send_test_message():
     webhook_url = os.getenv('WEIXIN_WEBHOOK')
@@ -228,8 +241,8 @@ def check_all_emails():
         logger.error(f"检查邮箱时发生错误: {str(e)}")
 
 @app.get("/check")
-async def manual_check():
-    """手动触发邮件检查"""
+async def manual_check(api_key: APIKey = Depends(get_api_key)):
+    """手动触发邮件检查（需要API密钥）"""
     try:
         check_all_emails()
         return {"status": "success", "message": "邮件检查完成"}
@@ -238,6 +251,7 @@ async def manual_check():
 
 @app.get("/")
 async def root():
+    """健康检查接口"""
     return {"status": "running", "message": "邮件监控服务正在运行"}
 
 # 添加定时任务
