@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from email.header import decode_header
 import time
+from datetime import datetime, timedelta
 
 # 加载环境变量
 load_dotenv()
@@ -37,17 +38,13 @@ def send_test_message():
     except Exception as e:
         return {"status": "error", "message": f"发送出错: {str(e)}"}
 
-@app.get("/test")
-async def test_webhook():
-    return send_test_message()
-
 class EmailMonitor:
     def __init__(self, email_addr, password, imap_server):
         self.email_addr = email_addr
         self.password = password
         self.imap_server = imap_server
         self.weixin_webhook = os.getenv('WEIXIN_WEBHOOK')
-        self.last_check_time = time.time()
+        self.last_check_time = datetime.now()
 
     def decode_subject(self, subject):
         if subject is None:
@@ -72,12 +69,14 @@ class EmailMonitor:
             logger.error(f"连接邮箱失败: {str(e)}")
             return False
 
-    def send_to_weixin(self, subject, sender, content):
+    def send_to_weixin(self, subject, sender, content, received_time):
         try:
+            # 格式化接收时间
+            time_str = received_time.strftime("%Y-%m-%d %H:%M:%S")
             message = {
                 "msgtype": "text",
                 "text": {
-                    "content": f"新邮件通知\n发件人: {sender}\n主题: {subject}\n内容: {content}",
+                    "content": f"📧 新邮件通知\n\n⏰ 接收时间: {time_str}\n👤 发件人: {sender}\n📑 主题: {subject}\n\n📝 内容预览:\n{content}",
                     "mentioned_list": ["@all"]
                 }
             }
@@ -110,34 +109,43 @@ class EmailMonitor:
         return content[:500]  # 限制内容长度
 
     def check_emails(self):
-        current_time = time.time()
         logger.info(f"开始检查邮箱: {self.email_addr}")
         
         if not self.connect():
-            logger.error(f"无法连接到邮箱: {self.email_addr}")
             return
 
         try:
             self.imap.select('INBOX')
-            # 修改搜索条件，只搜索未读邮件
-            _, messages = self.imap.search(None, 'UNSEEN')
+            # 搜索最近30分钟内的未读邮件
+            date = (datetime.now() - timedelta(minutes=30)).strftime("%d-%b-%Y")
+            _, messages = self.imap.search(None, f'(UNSEEN SINCE "{date}")')
             
             message_count = len(messages[0].split())
-            logger.info(f"发现 {message_count} 封未读邮件")
+            logger.info(f"发现 {message_count} 封新邮件")
             
             for num in messages[0].split():
                 try:
-                    logger.info(f"正在处理邮件 ID: {num}")
                     _, msg = self.imap.fetch(num, '(RFC822)')
                     email_body = msg[0][1]
                     email_message = email.message_from_bytes(email_body)
                     
+                    # 获取邮件接收时间
+                    received_time = datetime.fromtimestamp(
+                        email.utils.mktime_tz(
+                            email.utils.parsedate_tz(email_message['date'])
+                        )
+                    )
+                    
+                    # 只处理最近30分钟内的邮件
+                    if datetime.now() - received_time > timedelta(minutes=30):
+                        continue
+
                     subject = self.decode_subject(email_message['subject'])
                     sender = email_message['from']
                     content = self.get_email_content(email_message)
 
                     logger.info(f"发送邮件到微信: {subject}")
-                    self.send_to_weixin(subject, sender, content)
+                    self.send_to_weixin(subject, sender, content, received_time)
                     
                 except Exception as e:
                     logger.error(f"处理邮件时出错: {str(e)}")
@@ -151,7 +159,6 @@ class EmailMonitor:
                 self.imap.logout()
             except:
                 pass
-            self.last_check_time = current_time
 
 # 创建邮箱监控实例
 gmail_monitor = EmailMonitor(
@@ -184,18 +191,26 @@ async def manual_check():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/")
+async def root():
+    return {"status": "running", "message": "邮件监控服务正在运行"}
+
+# 添加定时任务
 @app.on_event("startup")
 async def startup_event():
-    # 创建一个线程池来处理邮件检查
-    executor = ThreadPoolExecutor(max_workers=2)
+    async def keep_alive():
+        while True:
+            await asyncio.sleep(60)  # 每分钟ping一次
+            requests.get(f"https://{os.getenv('VERCEL_URL', 'your-app-url')}")
     
     async def periodic_check():
         while True:
-            await asyncio.get_event_loop().run_in_executor(executor, check_all_emails)
-            await asyncio.sleep(60)  # 每60秒检查一次
+            await asyncio.sleep(60)  # 每分钟检查一次
+            try:
+                check_all_emails()
+            except Exception as e:
+                logger.error(f"定时检查时出错: {str(e)}")
     
-    asyncio.create_task(periodic_check())
-
-@app.get("/")
-async def root():
-    return {"status": "running", "message": "邮件监控服务正在运行"} 
+    if os.getenv('VERCEL_URL'):  # 只在Vercel环境中运行
+        asyncio.create_task(keep_alive())
+        asyncio.create_task(periodic_check()) 
