@@ -4,7 +4,6 @@ import email
 import requests
 from fastapi import FastAPI, HTTPException, Security, Depends, BackgroundTasks
 from fastapi.security.api_key import APIKeyHeader, APIKey
-from dotenv import load_dotenv
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
@@ -12,9 +11,6 @@ from email.header import decode_header
 import time
 from datetime import datetime, timedelta
 import pytz
-
-# 加载环境变量
-load_dotenv()
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -236,6 +232,14 @@ class EmailMonitor:
                 self.imap.logout()
             except:
                 pass
+
+# 从环境变量获取配置
+gmail_email = os.environ.get('GMAIL_EMAIL')
+gmail_password = os.environ.get('GMAIL_PASSWORD')
+qq_email = os.environ.get('QQ_EMAIL')
+qq_password = os.environ.get('QQ_PASSWORD')
+weixin_webhook = os.environ.get('WEIXIN_WEBHOOK')
+api_key = os.environ.get('API_KEY')
 
 # 创建邮箱监控实例
 gmail_monitor = EmailMonitor(
