@@ -442,3 +442,29 @@ async def startup_event():
     
     # 创建keep-alive任务
     asyncio.create_task(keep_alive()) 
+
+@app.get("/")
+async def root():
+    """根路由，显示服务基本信息"""
+    return {
+        "name": "邮件转发微信机器人",
+        "status": "running",
+        "version": "1.0.0",
+        "endpoints": {
+            "/": "服务信息",
+            "/wake": "触发邮件检查（定时任务使用）",
+            "/check": "手动触发检查（需要API密钥）",
+            "/status": "查看服务状态",
+            "/test": "测试微信机器人连接"
+        },
+        "last_check": service_status["last_check_time"],
+        "is_checking": service_status["is_checking"]
+    }
+
+@app.get("/health")
+async def health_check():
+    """健康检查接口"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S")
+    }
