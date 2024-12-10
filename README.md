@@ -4,16 +4,18 @@
 
 # 邮件转发微信机器人
 
-一个自动将Gmail和QQ邮箱的新邮件转发到企业微信群的服务。部署在Vercel上，无需自己的服务器。
+一个自动将Gmail、QQ邮箱和Outlook的新邮件转发到企业微信群的服务。支持多邮箱配置，部署在Vercel上，无需自己的服务器。
 
 ## 功能特点
 
-- 支持Gmail和QQ邮箱的IMAP监控
+- 支持多个Gmail、QQ邮箱和Outlook的IMAP监控
+- 每个邮箱类型使用不同图标，方便识别
 - 实时转发新邮件到企业微信群机器人
 - 显示北京时间的邮件接收时间
 - 自动@所有人提醒
 - 部署在Vercel上，免费且无需维护
 - 使用cron-job.org进行定时触发
+- 支持手动触发检查
 
 ## 配置步骤
 
@@ -34,6 +36,16 @@
    - 开启"IMAP/SMTP服务"
 3. 生成授权码（将作为密码使用）
 
+#### Outlook配置
+1. 确保使用Microsoft 365账户
+2. 开启IMAP访问：
+   - 登录Outlook网页版
+   - 设置 -> 查看所有Outlook设置 -> 邮件 -> POP和IMAP
+   - 确保IMAP已启用
+3. 如果开启了双重认证：
+   - 访问 [安全信息](https://account.microsoft.com/security)
+   - 生成应用密码并使用它代替普通密码
+
 ### 2. 企业微信配置
 
 1. 在企业微信群中添加机器人
@@ -41,15 +53,19 @@
 
 ### 3. 环境变量配置
 
-建 `.env` 文件，填入以下信息：
+创建 `.env` 文件，填入以下信息：
 ```
-# Gmail配置
-GMAIL_EMAIL=你的Gmail地址
-GMAIL_PASSWORD=Gmail应用专用密码
+# Gmail配置 (多个账号用逗号分隔)
+GMAIL_EMAILS=email1@gmail.com,email2@gmail.com
+GMAIL_PASSWORDS=password1,password2
 
-# QQ邮箱配置
-QQ_EMAIL=你的QQ邮箱地址
-QQ_PASSWORD=QQ邮箱授权码
+# QQ邮箱配置 (多个账号用逗号分隔)
+QQ_EMAILS=qq1@qq.com,qq2@qq.com
+QQ_PASSWORDS=password1,password2
+
+# Outlook邮箱配置 (多个账号用逗号分隔)
+OUTLOOK_EMAILS=user1@outlook.com,user2@outlook.com
+OUTLOOK_PASSWORDS=password1,password2
 
 # 微信机器人配置
 WEIXIN_WEBHOOK=企业微信机器人的Webhook地址
@@ -105,11 +121,6 @@ Vercel的免费计划（Hobby Plan）包含：
 - 每月约8,640次请求
 - 占用免费额度约8.6%
 
-如果您需要更频繁的检查，建议：
-1. 升级到Vercel的Pro计划
-2. 使用自己的服务器部署
-3. 考虑使用邮箱的推送服务
-
 ## API接口说明
 
 1. `/wake`：触发邮件检查（用于定时任务）
@@ -127,33 +138,48 @@ Vercel的免费计划（Hobby Plan）包含：
    - 显示错误统计
    - 显示当前是否正在检查
 
+4. `/test`：测试微信机器人连接
+   - 发送测试消息到企业微信群
+   - 验证配置是否正确
+
 ## 注意事项
 
-1. Gmail注意事项：
+1. 多邮箱配置注意事项：
+   - 确保邮箱地址和密码的数量匹配
+   - 不同邮箱使用不同图标便于区分
+   - 每个邮箱独立检查，互不影响
+
+2. Gmail注意事项：
    - 需要开启两步验证
    - 使用应用专用密码而不是账号密码
    - 需要允许不够安全的应用访问
 
-2. QQ邮箱注意事项：
+3. QQ邮箱注意事项：
    - 必须开启IMAP服务
    - 使用授权码而不是QQ密码
    - 确保邮箱已绑定手机号
 
-3. 企业微信机器人：
+4. Outlook注意事项：
+   - 推荐使用Microsoft 365账户
+   - 确保IMAP访问已启用
+   - 双重认证用户需使用应用密码
+
+5. 企业微信机器人：
    - Webhook地址要保密
    - 消息会自动@所有人
    - 邮件内容限制在500字以内
 
-4. 定时任务：
+6. 定时任务：
    - 使用cron-job.org确保服务持续运行
-   - 每分钟触发一次/wake接口
+   - 建议每5分钟触发一次
    - 重复的检查会自动跳过
 
 ## 故障排查
 
 1. 邮件没有转发：
-   - 检查邮箱配置是否正确
+   - 检查各个邮箱配置是否正确
    - 访问 `/status` 查看服务状态
+   - 使用 `/test` 测试机器人连接
    - 手动触发 `/check` 测试
 
 2. 服务不稳定：
@@ -161,10 +187,17 @@ Vercel的免费计划（Hobby Plan）包含：
    - 检查Vercel部署日志
    - 查看 `/status` 接口的错误统计
 
+3. 特定邮箱不工作：
+   - 检查该邮箱的IMAP设置
+   - 确认密码/授权码是否正确
+   - 查看日志中的具体错误信息
+
 ## 开发说明
 
 - 使用Python FastAPI框架
 - 支持异步处理和后台任务
+- 使用exchangelib处理Outlook邮箱
+- 使用imapclient处理Gmail和QQ邮箱
 - 所有时间均已转换为北京时间
 - 包含完整的错误处理和日志记录
 

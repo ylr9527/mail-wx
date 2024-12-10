@@ -11,6 +11,13 @@ from email.header import decode_header
 import time
 from datetime import datetime, timedelta
 import pytz
+from exchangelib import Credentials, Account, DELEGATE, Configuration
+from exchangelib.protocol import BaseProtocol, NoVerifyHTTPAdapter
+import urllib3
+
+# 禁用SSL警告
+urllib3.disable_warnings()
+BaseProtocol.HTTP_ADAPTER_CLS = NoVerifyHTTPAdapter
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +27,7 @@ logger = logging.getLogger(__name__)
 beijing_tz = pytz.timezone('Asia/Shanghai')
 
 # 配置检查间隔（秒）
-CHECK_INTERVAL = 1800  # 3分钟检查一次，建议不要设置太短的间隔
+CHECK_INTERVAL = 300  # 5分钟检查一次
 
 # 服务状态
 service_status = {
@@ -30,6 +37,46 @@ service_status = {
     "consecutive_errors": 0,
     "is_checking": False
 }
+
+# 邮箱配置
+def get_email_configs():
+    configs = {
+        'gmail': [],
+        'qq': [],
+        'outlook': []
+    }
+    
+    # Gmail配置
+    gmail_emails = os.getenv('GMAIL_EMAILS', '').split(',')
+    gmail_passwords = os.getenv('GMAIL_PASSWORDS', '').split(',')
+    for email, password in zip(gmail_emails, gmail_passwords):
+        if email and password:
+            configs['gmail'].append({
+                'email': email.strip(),
+                'password': password.strip()
+            })
+    
+    # QQ邮箱配置
+    qq_emails = os.getenv('QQ_EMAILS', '').split(',')
+    qq_passwords = os.getenv('QQ_PASSWORDS', '').split(',')
+    for email, password in zip(qq_emails, qq_passwords):
+        if email and password:
+            configs['qq'].append({
+                'email': email.strip(),
+                'password': password.strip()
+            })
+    
+    # Outlook配置
+    outlook_emails = os.getenv('OUTLOOK_EMAILS', '').split(',')
+    outlook_passwords = os.getenv('OUTLOOK_PASSWORDS', '').split(',')
+    for email, password in zip(outlook_emails, outlook_passwords):
+        if email and password:
+            configs['outlook'].append({
+                'email': email.strip(),
+                'password': password.strip()
+            })
+    
+    return configs
 
 app = FastAPI()
 
@@ -233,107 +280,152 @@ class EmailMonitor:
             except:
                 pass
 
-# 从环境变量获取配置
-gmail_email = os.environ.get('GMAIL_EMAIL')
-gmail_password = os.environ.get('GMAIL_PASSWORD')
-qq_email = os.environ.get('QQ_EMAIL')
-qq_password = os.environ.get('QQ_PASSWORD')
-weixin_webhook = os.environ.get('WEIXIN_WEBHOOK')
-api_key = os.environ.get('API_KEY')
+class OutlookMonitor:
+    def __init__(self, email_addr, password):
+        self.email_addr = email_addr
+        self.password = password
+        self.weixin_webhook = os.getenv('WEIXIN_WEBHOOK')
+        self.last_check_time = datetime.now(beijing_tz)
 
-# 创建邮箱监控实例
-gmail_monitor = EmailMonitor(
-    os.getenv('GMAIL_EMAIL'),
-    os.getenv('GMAIL_PASSWORD'),
-    'imap.gmail.com',
-    'Gmail'
-)
+    def connect(self):
+        try:
+            credentials = Credentials(self.email_addr, self.password)
+            config = Configuration(credentials=credentials, server='outlook.office365.com')
+            self.account = Account(
+                primary_smtp_address=self.email_addr,
+                config=config,
+                access_type=DELEGATE
+            )
+            return True
+        except Exception as e:
+            logger.error(f"连接Outlook邮箱失败: {str(e)}")
+            return False
 
-qq_monitor = EmailMonitor(
-    os.getenv('QQ_EMAIL'),
-    os.getenv('QQ_PASSWORD'),
-    'imap.qq.com',
-    'QQ'
-)
+    def send_to_weixin(self, subject, sender, content, received_time):
+        try:
+            # 转换为北京时间
+            if received_time.tzinfo is None:
+                received_time = pytz.utc.localize(received_time)
+            beijing_time = received_time.astimezone(beijing_tz)
+            
+            # 格式化北京时间
+            time_str = beijing_time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            message = {
+                "msgtype": "text",
+                "text": {
+                    "content": f"📨 Outlook邮件通知\n\n📬 收件邮箱: {self.email_addr}\n⏰ 接收时间: {time_str} (北京时间)\n👤 发件人: {sender}\n📑 主题: {subject}\n\n📝 内容预览:\n{content}",
+                    "mentioned_list": ["@all"]
+                }
+            }
+            response = requests.post(
+                self.weixin_webhook,
+                json=message
+            )
+            if response.status_code == 200:
+                logger.info("Outlook邮件发送到微信成功")
+            else:
+                logger.error(f"Outlook邮件发送到微信失败: {response.text}")
+        except Exception as e:
+            logger.error(f"发送到微信时出错: {str(e)}")
 
-def check_all_emails():
-    """检查所有邮箱并更新服务状态"""
+    def check_emails(self):
+        logger.info(f"开始检查Outlook邮箱: {self.email_addr}")
+        
+        if not self.connect():
+            return
+
+        try:
+            # 获取最近30分钟的未读邮件
+            filter_date = datetime.now(beijing_tz) - timedelta(minutes=30)
+            unread_messages = self.account.inbox.filter(
+                is_read=False,
+                datetime_received__gt=filter_date
+            )
+
+            for message in unread_messages:
+                try:
+                    content = message.body[:500]  # 限制内容长度
+                    self.send_to_weixin(
+                        message.subject,
+                        str(message.sender),
+                        content,
+                        message.datetime_received
+                    )
+                    message.is_read = True
+                    message.save()
+                except Exception as e:
+                    logger.error(f"处理Outlook邮件时出错: {str(e)}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"检查Outlook邮件时出错: {str(e)}")
+
+async def check_all_emails(background_tasks: BackgroundTasks):
+    """检查所有配置的邮箱"""
+    if service_status["is_checking"]:
+        return {"message": "邮件检查正在进行中"}
+    
+    service_status["is_checking"] = True
+    configs = get_email_configs()
+    
     try:
-        logger.info("开始检查所有邮箱")
-        gmail_monitor.check_emails()
-        qq_monitor.check_emails()
-        logger.info("邮箱检查完成")
+        # 检查Gmail邮箱
+        for gmail_config in configs['gmail']:
+            monitor = EmailMonitor(
+                gmail_config['email'],
+                gmail_config['password'],
+                'imap.gmail.com',
+                'Gmail'
+            )
+            monitor.check_emails()
+        
+        # 检查QQ邮箱
+        for qq_config in configs['qq']:
+            monitor = EmailMonitor(
+                qq_config['email'],
+                qq_config['password'],
+                'imap.qq.com',
+                'QQ'
+            )
+            monitor.check_emails()
+        
+        # 检查Outlook邮箱
+        for outlook_config in configs['outlook']:
+            monitor = OutlookMonitor(
+                outlook_config['email'],
+                outlook_config['password']
+            )
+            monitor.check_emails()
+        
         update_service_status(True)
     except Exception as e:
-        error_msg = f"检查邮箱时发生错误: {str(e)}"
-        logger.error(error_msg)
-        update_service_status(False, error_msg)
-        raise
-
-def background_check():
-    """在后台执行邮件检查"""
-    try:
-        if service_status["is_checking"]:
-            logger.info("已有检查任务在运行，跳过本次检查")
-            return
-        
-        service_status["is_checking"] = True
-        check_all_emails()
-    except Exception as e:
-        logger.error(f"后台检查时出错: {str(e)}")
+        error_message = f"检查邮件时出错: {str(e)}"
+        logger.error(error_message)
+        update_service_status(False, error_message)
     finally:
         service_status["is_checking"] = False
 
-@app.get("/check")
-async def manual_check(api_key: APIKey = Depends(get_api_key)):
-    """手动触发邮件检查（需要API密钥）"""
-    try:
-        check_all_emails()
-        return {"status": "success", "message": "邮件检查完成"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
 @app.get("/wake")
-async def wake_up(background_tasks: BackgroundTasks):
-    """用于保持服务活跃的接口"""
-    try:
-        # 立即返回响应，但在后台执行检查
-        background_tasks.add_task(background_check)
-        
-        return {
-            "status": "accepted",
-            "message": "检查任务已加入队列",
-            "last_check": service_status["last_check_time"],
-            "is_checking": service_status["is_checking"]
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "last_check": service_status["last_check_time"]
-        }
+async def wake_service(background_tasks: BackgroundTasks):
+    """唤醒服务并检查邮件"""
+    background_tasks.add_task(check_all_emails, background_tasks)
+    return {"message": "开始检查邮件"}
+
+@app.get("/check", dependencies=[Depends(get_api_key)])
+async def check_emails_endpoint(background_tasks: BackgroundTasks):
+    """手动触发邮件检查"""
+    return await check_all_emails(background_tasks)
 
 @app.get("/status")
 async def get_status():
     """获取服务状态"""
-    return {
-        "status": "running",
-        "last_check_time": service_status["last_check_time"],
-        "last_check_status": service_status["last_check_status"],
-        "error_count": service_status["error_count"],
-        "consecutive_errors": service_status["consecutive_errors"],
-        "is_checking": service_status["is_checking"]
-    }
+    return service_status
 
-@app.get("/")
-async def root():
-    """健康检查接口"""
-    return {
-        "status": "running",
-        "message": "邮件监控服务正在运行",
-        "last_check": service_status["last_check_time"],
-        "is_checking": service_status["is_checking"]
-    }
+@app.get("/test")
+async def test_webhook():
+    """测试微信机器人"""
+    return send_test_message()
 
 @app.on_event("startup")
 async def startup_event():
