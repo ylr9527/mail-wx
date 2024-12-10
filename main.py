@@ -26,6 +26,14 @@ beijing_tz = pytz.timezone('Asia/Shanghai')
 # 配置检查间隔（秒）
 CHECK_INTERVAL = 300  # 5分钟检查一次
 
+# 服务状态
+service_status = {
+    "last_check_time": None,
+    "last_check_status": "未开始",
+    "error_count": 0,
+    "consecutive_errors": 0
+}
+
 app = FastAPI()
 
 # API密钥验证
@@ -39,6 +47,18 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
         status_code=403,
         detail="无效的API密钥"
     )
+
+def update_service_status(success: bool, error_message: str = None):
+    """更新服务状态"""
+    service_status["last_check_time"] = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S")
+    
+    if success:
+        service_status["last_check_status"] = "成功"
+        service_status["consecutive_errors"] = 0
+    else:
+        service_status["last_check_status"] = f"失败: {error_message}"
+        service_status["error_count"] += 1
+        service_status["consecutive_errors"] += 1
 
 def send_test_message():
     webhook_url = os.getenv('WEIXIN_WEBHOOK')
@@ -232,13 +252,18 @@ qq_monitor = EmailMonitor(
 )
 
 def check_all_emails():
-    logger.info("开始检查所有邮箱")
+    """检查所有邮箱并更新服务状态"""
     try:
+        logger.info("开始检查所有邮箱")
         gmail_monitor.check_emails()
         qq_monitor.check_emails()
         logger.info("邮箱检查完成")
+        update_service_status(True)
     except Exception as e:
-        logger.error(f"检查邮箱时发生错误: {str(e)}")
+        error_msg = f"检查邮箱时发生错误: {str(e)}"
+        logger.error(error_msg)
+        update_service_status(False, error_msg)
+        raise
 
 @app.get("/check")
 async def manual_check(api_key: APIKey = Depends(get_api_key)):
@@ -249,18 +274,51 @@ async def manual_check(api_key: APIKey = Depends(get_api_key)):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/wake")
+async def wake_up():
+    """用于保持服务活跃的接口"""
+    try:
+        check_all_emails()
+        return {
+            "status": "success",
+            "message": "服务已唤醒并完成邮件检查",
+            "last_check": service_status["last_check_time"],
+            "consecutive_errors": service_status["consecutive_errors"]
+        }
+    except Exception as e:
+        # 即使发生错误也返回200状态码，但包含错误信息
+        return {
+            "status": "error",
+            "message": str(e),
+            "last_check": service_status["last_check_time"],
+            "consecutive_errors": service_status["consecutive_errors"]
+        }
+
+@app.get("/status")
+async def get_status():
+    """获取服务状态"""
+    return {
+        "status": "running",
+        "last_check_time": service_status["last_check_time"],
+        "last_check_status": service_status["last_check_status"],
+        "error_count": service_status["error_count"],
+        "consecutive_errors": service_status["consecutive_errors"]
+    }
+
 @app.get("/")
 async def root():
     """健康检查接口"""
-    return {"status": "running", "message": "邮件监控服务正在运行"}
+    return {
+        "status": "running",
+        "message": "邮件监控服务正在运行",
+        "last_check": service_status["last_check_time"]
+    }
 
-# 添加定时任务
 @app.on_event("startup")
 async def startup_event():
     async def keep_alive():
         while True:
             try:
-                # 每次keep-alive的时候同时检查邮件
                 logger.info("执行定时检查...")
                 check_all_emails()
                 logger.info(f"检查完成，等待下一次检查")
@@ -274,13 +332,4 @@ async def startup_event():
             await asyncio.sleep(CHECK_INTERVAL)
     
     # 创建定时任务
-    asyncio.create_task(keep_alive())
-
-@app.get("/wake")
-async def wake_up():
-    """用于保持服务活跃的接口"""
-    try:
-        check_all_emails()
-        return {"status": "success", "message": "服务已唤醒并完成邮件检查"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)} 
+    asyncio.create_task(keep_alive()) 
