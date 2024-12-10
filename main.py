@@ -364,6 +364,7 @@ class OutlookMonitor:
 async def check_all_emails(background_tasks: BackgroundTasks):
     """检查所有配置的邮箱"""
     if service_status["is_checking"]:
+        logger.info("已有检查任务在运行，跳过本次检查")
         return {"message": "邮件检查正在进行中"}
     
     service_status["is_checking"] = True
@@ -372,6 +373,7 @@ async def check_all_emails(background_tasks: BackgroundTasks):
     try:
         # 检查Gmail邮箱
         for gmail_config in configs['gmail']:
+            logger.info(f"开始检查Gmail邮箱: {gmail_config['email']}")
             monitor = EmailMonitor(
                 gmail_config['email'],
                 gmail_config['password'],
@@ -382,6 +384,7 @@ async def check_all_emails(background_tasks: BackgroundTasks):
         
         # 检查QQ邮箱
         for qq_config in configs['qq']:
+            logger.info(f"开始检查QQ邮箱: {qq_config['email']}")
             monitor = EmailMonitor(
                 qq_config['email'],
                 qq_config['password'],
@@ -392,12 +395,14 @@ async def check_all_emails(background_tasks: BackgroundTasks):
         
         # 检查Outlook邮箱
         for outlook_config in configs['outlook']:
+            logger.info(f"开始检查Outlook邮箱: {outlook_config['email']}")
             monitor = OutlookMonitor(
                 outlook_config['email'],
                 outlook_config['password']
             )
             monitor.check_emails()
         
+        logger.info("所有邮箱检查完成")
         update_service_status(True)
     except Exception as e:
         error_message = f"检查邮件时出错: {str(e)}"
@@ -409,8 +414,28 @@ async def check_all_emails(background_tasks: BackgroundTasks):
 @app.get("/wake")
 async def wake_service(background_tasks: BackgroundTasks):
     """唤醒服务并检查邮件"""
+    logger.info("收到wake请求，开始检查邮件")
+    
+    # 检查环境变量
+    configs = get_email_configs()
+    logger.info(f"Gmail配置数量: {len(configs['gmail'])}")
+    logger.info(f"QQ邮箱配置数量: {len(configs['qq'])}")
+    logger.info(f"Outlook配置数量: {len(configs['outlook'])}")
+    
+    if not any([configs['gmail'], configs['qq'], configs['outlook']]):
+        logger.error("没有找到有效的邮箱配置")
+        return {"message": "没有找到有效的邮箱配置"}
+    
+    if not os.getenv('WEIXIN_WEBHOOK'):
+        logger.error("未配置微信Webhook")
+        return {"message": "未配置微信Webhook"}
+    
     background_tasks.add_task(check_all_emails, background_tasks)
-    return {"message": "开始检查邮件"}
+    return {"message": "开始检查邮件", "configs": {
+        "gmail_count": len(configs['gmail']),
+        "qq_count": len(configs['qq']),
+        "outlook_count": len(configs['outlook'])
+    }}
 
 @app.get("/check", dependencies=[Depends(get_api_key)])
 async def check_emails_endpoint(background_tasks: BackgroundTasks):
