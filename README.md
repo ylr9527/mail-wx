@@ -23,7 +23,7 @@
 
 #### Gmail配置
 1. 登录Gmail账号
-2. 开启两步验证：访问 [Google账号安全设置](https://myaccount.google.com/security)
+2. 开启两步验证��访问 [Google账号安全设置](https://myaccount.google.com/security)
 3. 生成应用专用密码：
    - 访问 [应用专用密码设置](https://myaccount.google.com/apppasswords)
    - 选择"其他"，输入名称（如"Mail-Trans"）
@@ -53,6 +53,10 @@
 
 ### 3. 环境变量配置
 
+有两种方式配置环境变量：
+
+#### 方式一：本地开发使用 `.env` 文件
+
 创建 `.env` 文件，填入以下信息：
 ```
 # Gmail配置 (多个账号用逗号分隔)
@@ -73,6 +77,47 @@ WEIXIN_WEBHOOK=企业微信机器人的Webhook地址
 # 安全配置
 API_KEY=自定义的API密钥（用于手动触发检查）
 ```
+
+#### 方式二：Vercel部署使用环境变量（推荐）
+
+在Vercel部署时，建议使用Vercel的环境变量功能：
+
+1. 在Vercel项目设置中找到"Environment Variables"
+2. 添加上述相同的环境变量
+3. 可以为不同环境（Production/Preview/Development）设置不同的值
+4. 环境变量会被加密存储，更安全
+
+#### 环境变量说明
+
+1. 邮箱配置格式：
+   - 多个邮箱地址用英文逗号分隔
+   - 密码顺序要与邮箱地址一一对应
+   - 示例：`GMAIL_EMAILS=a@gmail.com,b@gmail.com`
+
+2. 密码说明：
+   - Gmail：使用应用专用密码
+   - QQ邮箱：使用授权码
+   - Outlook：使用应用密码或账户密码
+
+3. 安全建议：
+   - 不要将 `.env` 文件提交到代码仓库
+   - 在生产环境使用Vercel的环境变量
+   - 定期更换API_KEY
+   - 建议对每个邮箱使用单独的应用密码
+
+4. 可选配置：
+   ```
+   # 检查间隔（分钟，默认5）
+   CHECK_INTERVAL=5
+   
+   # 是否启用特定邮箱服务
+   ENABLE_GMAIL=true
+   ENABLE_QQ=true
+   ENABLE_OUTLOOK=true
+   
+   # 调试模式
+   DEBUG=false
+   ```
 
 ### 4. Vercel部署
 
@@ -177,7 +222,7 @@ Vercel的免费计划（Hobby Plan）包含：
 ## 故障排查
 
 1. 邮件没有转发：
-   - 检查各个邮箱配置是否正确
+   - 检查各个邮箱配��是否正确
    - 访问 `/status` 查看服务状态
    - 使用 `/test` 测试机器人连接
    - 手动触发 `/check` 测试
