@@ -52,10 +52,16 @@ class EmailMonitor:
 
     def send_to_weixin(self, subject, sender, content):
         try:
-            message = f"新邮件通知\n发件人: {sender}\n主题: {subject}\n内容: {content}"
+            message = {
+                "msgtype": "text",
+                "text": {
+                    "content": f"新邮件通知\n发件人: {sender}\n主题: {subject}\n内容: {content}",
+                    "mentioned_list": ["@all"]
+                }
+            }
             response = requests.post(
                 self.weixin_webhook,
-                json={"msgtype": "text", "text": {"content": message}}
+                json=message
             )
             if response.status_code == 200:
                 logger.info("成功发送到微信")
