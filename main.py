@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
+from email.header import decode_header
+import time
 
 # 加载环境变量
 load_dotenv()
@@ -23,6 +25,21 @@ class EmailMonitor:
         self.password = password
         self.imap_server = imap_server
         self.weixin_webhook = os.getenv('WEIXIN_WEBHOOK')
+        self.last_check_time = time.time()
+
+    def decode_subject(self, subject):
+        if subject is None:
+            return ""
+        decoded_parts = []
+        for part, encoding in decode_header(subject):
+            if isinstance(part, bytes):
+                try:
+                    decoded_parts.append(part.decode(encoding or 'utf-8', errors='replace'))
+                except:
+                    decoded_parts.append(part.decode('utf-8', errors='replace'))
+            else:
+                decoded_parts.append(str(part))
+        return ' '.join(decoded_parts)
 
     def connect(self):
         try:
@@ -47,32 +64,47 @@ class EmailMonitor:
         except Exception as e:
             logger.error(f"发送到微信时出错: {str(e)}")
 
+    def get_email_content(self, email_message):
+        content = ""
+        if email_message.is_multipart():
+            for part in email_message.walk():
+                if part.get_content_type() == "text/plain":
+                    try:
+                        content = part.get_payload(decode=True).decode(errors='replace')
+                        break
+                    except:
+                        continue
+        else:
+            try:
+                content = email_message.get_payload(decode=True).decode(errors='replace')
+            except:
+                content = "无法解析邮件内容"
+        return content[:500]  # 限制内容长度
+
     def check_emails(self):
+        current_time = time.time()
         if not self.connect():
             return
 
         try:
             self.imap.select('INBOX')
-            _, messages = self.imap.search(None, 'UNSEEN')
+            search_criterion = f'SINCE "{time.strftime("%d-%b-%Y", time.localtime(self.last_check_time))}"'
+            _, messages = self.imap.search(None, search_criterion)
             
             for num in messages[0].split():
-                _, msg = self.imap.fetch(num, '(RFC822)')
-                email_body = msg[0][1]
-                email_message = email.message_from_bytes(email_body)
-                
-                subject = email_message['subject']
-                sender = email_message['from']
-                content = ""
+                try:
+                    _, msg = self.imap.fetch(num, '(RFC822)')
+                    email_body = msg[0][1]
+                    email_message = email.message_from_bytes(email_body)
+                    
+                    subject = self.decode_subject(email_message['subject'])
+                    sender = email_message['from']
+                    content = self.get_email_content(email_message)
 
-                if email_message.is_multipart():
-                    for part in email_message.walk():
-                        if part.get_content_type() == "text/plain":
-                            content = part.get_payload(decode=True).decode()
-                            break
-                else:
-                    content = email_message.get_payload(decode=True).decode()
-
-                self.send_to_weixin(subject, sender, content[:500])  # 限制内容长度
+                    self.send_to_weixin(subject, sender, content)
+                except Exception as e:
+                    logger.error(f"处理邮件时出错: {str(e)}")
+                    continue
                 
         except Exception as e:
             logger.error(f"检查邮件时出错: {str(e)}")
@@ -82,6 +114,7 @@ class EmailMonitor:
                 self.imap.logout()
             except:
                 pass
+            self.last_check_time = current_time
 
 # 创建邮箱监控实例
 gmail_monitor = EmailMonitor(
