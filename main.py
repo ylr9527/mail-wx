@@ -19,6 +19,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+def send_test_message():
+    webhook_url = os.getenv('WEIXIN_WEBHOOK')
+    try:
+        message = {
+            "msgtype": "text",
+            "text": {
+                "content": "这是一条测试消息，来自邮件转发机器人",
+                "mentioned_list": ["@all"]
+            }
+        }
+        response = requests.post(webhook_url, json=message)
+        if response.status_code == 200:
+            return {"status": "success", "message": "测试消息发送成功"}
+        else:
+            return {"status": "error", "message": f"发送失败: {response.text}"}
+    except Exception as e:
+        return {"status": "error", "message": f"发送出错: {str(e)}"}
+
+@app.get("/test")
+async def test_webhook():
+    return send_test_message()
+
 class EmailMonitor:
     def __init__(self, email_addr, password, imap_server):
         self.email_addr = email_addr
