@@ -131,17 +131,20 @@ class EmailMonitor:
         try:
             self.imap.select('INBOX')
             
+            # 获取30分钟前的时间戳（北京时间）
+            time_threshold = datetime.now(beijing_tz) - timedelta(minutes=30)
+            
             # QQ邮箱和Gmail使用不同的搜索条件
             if self.email_type == 'QQ':
-                # QQ邮箱使用简单的未读邮件搜索
+                # QQ邮箱：搜索所有未读邮件，后续用时间过滤
                 _, messages = self.imap.search(None, 'UNSEEN')
             else:
-                # Gmail使用时间过滤，使用北京时间
-                date = (datetime.now(beijing_tz) - timedelta(minutes=30)).strftime("%d-%b-%Y")
+                # Gmail：使用IMAP的时间过滤
+                date = time_threshold.strftime("%d-%b-%Y")
                 _, messages = self.imap.search(None, f'(UNSEEN SINCE "{date}")')
             
             message_count = len(messages[0].split())
-            logger.info(f"发现 {message_count} 封新{self.email_type}邮件")
+            logger.info(f"发现 {message_count} 封未读{self.email_type}邮件")
             
             for num in messages[0].split():
                 try:
@@ -154,22 +157,24 @@ class EmailMonitor:
                     if date_str:
                         try:
                             # 解析邮件时间并转换为UTC时间
-                            received_time = datetime.fromtimestamp(
-                                email.utils.mktime_tz(
-                                    email.utils.parsedate_tz(date_str)
-                                ),
-                                pytz.utc
-                            )
+                            parsed_time = email.utils.parsedate_tz(date_str)
+                            if parsed_time:
+                                timestamp = email.utils.mktime_tz(parsed_time)
+                                received_time = datetime.fromtimestamp(timestamp, pytz.utc)
+                            else:
+                                received_time = datetime.now(pytz.utc)
                         except:
                             received_time = datetime.now(pytz.utc)
                     else:
                         received_time = datetime.now(pytz.utc)
+
+                    # 转换为北京时间进行比较
+                    beijing_received_time = received_time.astimezone(beijing_tz)
                     
-                    # 只处理最近30分钟内的邮件（QQ邮箱不做时间限制）
-                    if self.email_type == 'Gmail':
-                        beijing_received_time = received_time.astimezone(beijing_tz)
-                        if datetime.now(beijing_tz) - beijing_received_time > timedelta(minutes=30):
-                            continue
+                    # 对所有邮箱都进行时间过滤
+                    if beijing_received_time < time_threshold:
+                        logger.info(f"跳过较早的邮件，接收时间: {beijing_received_time}")
+                        continue
 
                     subject = self.decode_subject(email_message['subject'])
                     sender = email_message['from']
@@ -211,7 +216,7 @@ def check_all_emails():
     try:
         gmail_monitor.check_emails()
         qq_monitor.check_emails()
-        logger.info("邮箱检查完成")
+        logger.info("邮���检查完成")
     except Exception as e:
         logger.error(f"检查邮箱时发生错误: {str(e)}")
 
