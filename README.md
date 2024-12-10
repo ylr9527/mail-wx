@@ -23,7 +23,7 @@
 
 #### Gmail配置
 1. 登录Gmail账号
-2. 开启两步验证��访问 [Google账号安全设置](https://myaccount.google.com/security)
+2. 开启两步验证访问 [Google账号安全设置](https://myaccount.google.com/security)
 3. 生成应用专用密码：
    - 访问 [应用专用密码设置](https://myaccount.google.com/apppasswords)
    - 选择"其他"，输入名称（如"Mail-Trans"）
@@ -222,7 +222,7 @@ Vercel的免费计划（Hobby Plan）包含：
 ## 故障排查
 
 1. 邮件没有转发：
-   - 检查各个邮箱配��是否正确
+   - 检查各个邮箱配是否正确
    - 访问 `/status` 查看服务状态
    - 使用 `/test` 测试机器人连接
    - 手动触发 `/check` 测试
