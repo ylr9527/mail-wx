@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 beijing_tz = pytz.timezone('Asia/Shanghai')
 
 # 配置检查间隔（秒）
-CHECK_INTERVAL = 300  # 5分钟检查一次
+CHECK_INTERVAL = 180  # 3分钟检查一次，建议不要设置太短的间隔
 
 # 服务状态
 service_status = {
@@ -170,7 +170,7 @@ class EmailMonitor:
             
             # QQ邮箱和Gmail使用不同的搜索条件
             if self.email_type == 'QQ':
-                # QQ邮箱搜索最近��天的未读邮件
+                # QQ邮箱搜索最近天的未读邮件
                 date = (datetime.now(beijing_tz) - timedelta(days=1)).strftime("%d-%b-%Y")
                 _, messages = self.imap.search(None, f'(UNSEEN SINCE "{date}")')
             else:
