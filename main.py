@@ -259,21 +259,28 @@ async def root():
 async def startup_event():
     async def keep_alive():
         while True:
-            await asyncio.sleep(60)  # 每分钟ping一次
             try:
-                requests.get(f"https://{os.getenv('VERCEL_URL', 'your-app-url')}")
-            except:
-                pass
-    
-    async def periodic_check():
-        while True:
-            try:
+                # 每次keep-alive的时候同时检查邮件
+                logger.info("执行定时检查...")
                 check_all_emails()
-                logger.info(f"完成一次检查，等待 {CHECK_INTERVAL} 秒后进行下一次检查")
+                logger.info(f"检查完成，等待下一次检查")
+                
+                # 发送请求保持服务活跃
+                if os.getenv('VERCEL_URL'):
+                    requests.get(f"https://{os.getenv('VERCEL_URL')}")
             except Exception as e:
                 logger.error(f"定时检查时出错: {str(e)}")
+            
             await asyncio.sleep(CHECK_INTERVAL)
     
-    if os.getenv('VERCEL_URL'):  # 只在Vercel环境中运行
-        asyncio.create_task(keep_alive())
-        asyncio.create_task(periodic_check()) 
+    # 创建定时任务
+    asyncio.create_task(keep_alive())
+
+@app.get("/wake")
+async def wake_up():
+    """用于保持服务活跃的接口"""
+    try:
+        check_all_emails()
+        return {"status": "success", "message": "服务已唤醒并完成邮件检查"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)} 
