@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # 设置北京时区
 beijing_tz = pytz.timezone('Asia/Shanghai')
 
+# 配置检查间隔（秒）
+CHECK_INTERVAL = 300  # 5分钟检查一次
+
 app = FastAPI()
 
 def send_test_message():
@@ -243,15 +246,19 @@ async def startup_event():
     async def keep_alive():
         while True:
             await asyncio.sleep(60)  # 每分钟ping一次
-            requests.get(f"https://{os.getenv('VERCEL_URL', 'your-app-url')}")
+            try:
+                requests.get(f"https://{os.getenv('VERCEL_URL', 'your-app-url')}")
+            except:
+                pass
     
     async def periodic_check():
         while True:
-            await asyncio.sleep(60)  # 每分钟检查一次
             try:
                 check_all_emails()
+                logger.info(f"完成一次检查，等待 {CHECK_INTERVAL} 秒后进行下一次检查")
             except Exception as e:
                 logger.error(f"定时检查时出错: {str(e)}")
+            await asyncio.sleep(CHECK_INTERVAL)
     
     if os.getenv('VERCEL_URL'):  # 只在Vercel环境中运行
         asyncio.create_task(keep_alive())
