@@ -2,7 +2,7 @@ import os
 import imaplib
 import email
 import requests
-from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi import FastAPI, HTTPException, Security, Depends, BackgroundTasks
 from fastapi.security.api_key import APIKeyHeader, APIKey
 from dotenv import load_dotenv
 import asyncio
@@ -31,7 +31,8 @@ service_status = {
     "last_check_time": None,
     "last_check_status": "未开始",
     "error_count": 0,
-    "consecutive_errors": 0
+    "consecutive_errors": 0,
+    "is_checking": False
 }
 
 app = FastAPI()
@@ -169,7 +170,7 @@ class EmailMonitor:
             
             # QQ邮箱和Gmail使用不同的搜索条件
             if self.email_type == 'QQ':
-                # QQ邮箱搜索最近一天的未读邮件
+                # QQ邮箱搜索最近��天的未读邮件
                 date = (datetime.now(beijing_tz) - timedelta(days=1)).strftime("%d-%b-%Y")
                 _, messages = self.imap.search(None, f'(UNSEEN SINCE "{date}")')
             else:
@@ -265,6 +266,20 @@ def check_all_emails():
         update_service_status(False, error_msg)
         raise
 
+def background_check():
+    """在后台执行邮件检查"""
+    try:
+        if service_status["is_checking"]:
+            logger.info("已有检查任务在运行，跳过本次检查")
+            return
+        
+        service_status["is_checking"] = True
+        check_all_emails()
+    except Exception as e:
+        logger.error(f"后台检查时出错: {str(e)}")
+    finally:
+        service_status["is_checking"] = False
+
 @app.get("/check")
 async def manual_check(api_key: APIKey = Depends(get_api_key)):
     """手动触发邮件检查（需要API密钥）"""
@@ -275,23 +290,23 @@ async def manual_check(api_key: APIKey = Depends(get_api_key)):
         return {"status": "error", "message": str(e)}
 
 @app.get("/wake")
-async def wake_up():
+async def wake_up(background_tasks: BackgroundTasks):
     """用于保持服务活跃的接口"""
     try:
-        check_all_emails()
+        # 立即返回响应，但在后台执行检查
+        background_tasks.add_task(background_check)
+        
         return {
-            "status": "success",
-            "message": "服务已唤醒并完成邮件检查",
+            "status": "accepted",
+            "message": "检查任务已加入队列",
             "last_check": service_status["last_check_time"],
-            "consecutive_errors": service_status["consecutive_errors"]
+            "is_checking": service_status["is_checking"]
         }
     except Exception as e:
-        # 即使发生错误也返回200状态码，但包含错误信息
         return {
             "status": "error",
             "message": str(e),
-            "last_check": service_status["last_check_time"],
-            "consecutive_errors": service_status["consecutive_errors"]
+            "last_check": service_status["last_check_time"]
         }
 
 @app.get("/status")
@@ -302,7 +317,8 @@ async def get_status():
         "last_check_time": service_status["last_check_time"],
         "last_check_status": service_status["last_check_status"],
         "error_count": service_status["error_count"],
-        "consecutive_errors": service_status["consecutive_errors"]
+        "consecutive_errors": service_status["consecutive_errors"],
+        "is_checking": service_status["is_checking"]
     }
 
 @app.get("/")
@@ -311,7 +327,8 @@ async def root():
     return {
         "status": "running",
         "message": "邮件监控服务正在运行",
-        "last_check": service_status["last_check_time"]
+        "last_check": service_status["last_check_time"],
+        "is_checking": service_status["is_checking"]
     }
 
 @app.on_event("startup")
@@ -319,17 +336,13 @@ async def startup_event():
     async def keep_alive():
         while True:
             try:
-                logger.info("执行定时检查...")
-                check_all_emails()
-                logger.info(f"检查完成，等待下一次检查")
-                
-                # 发送请求保持服务活跃
+                # 只保持服务活跃，不执行检查
                 if os.getenv('VERCEL_URL'):
                     requests.get(f"https://{os.getenv('VERCEL_URL')}")
             except Exception as e:
-                logger.error(f"定时检查时出错: {str(e)}")
+                logger.error(f"keep-alive请求失败: {str(e)}")
             
-            await asyncio.sleep(CHECK_INTERVAL)
+            await asyncio.sleep(60)  # 每分钟ping一次
     
-    # 创建定时任务
+    # 创建keep-alive任务
     asyncio.create_task(keep_alive()) 
