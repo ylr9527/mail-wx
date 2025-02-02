@@ -40,7 +40,7 @@
 
 ### 3. 环境变量配置
 
-创建 `.env` 文件，填入以下信息：
+编辑 `.env` 文件，填入以下信息：
 ```
 # Gmail配置 (多个账号用逗号分隔)
 GMAIL_EMAILS=email1@gmail.com,email2@gmail.com
