@@ -1,21 +1,8 @@
-之前使用QQ邮箱APP，但是经常有延迟，不提醒，经过各位的提醒发现直接谷歌转QQ邮箱然后设置微信提醒确实很及时，不过需要在APP里面把新邮件提醒关闭，因为QQ邮件服务器是按照APP的设置来提醒的，而不是按照微信提醒的设置来提醒的。
+修改自 https://github.com/1143520/mail-wx 方便和我有一样需求的小白使用
 
-本项目在即时接受邮件上确实不方便，但是还是有一定可取之处，适合多邮箱或者不想将gmail内容暴露给QQ邮箱，需要定时检查邮箱的用户。
+# 邮件转发
 
-# 邮件转发微信机器人
-
-一个自动将Gmail、QQ邮箱和Outlook的新邮件转发到企业微信群的服务。支持多邮箱配置，部署在Vercel上，无需自己的服务器。
-
-## 功能特点
-
-- 支持多个Gmail、QQ邮箱和Outlook的IMAP监控
-- 每个邮箱类型使用不同图标，方便识别
-- 实时转发新邮件到企业微信群机器人
-- 显示北京时间的邮件接收时间
-- 自动@所有人提醒
-- 部署在Vercel上，免费且无需维护
-- 使用cron-job.org进行定时触发
-- 支持手动触发检查
+一个自动将Gmail、QQ邮箱和Outlook的新邮件转发到钉钉、飞书、企业微信机器人和PushMe的服务。支持多邮箱配置，部署在自己的服务器上。
 
 ## 配置步骤
 
@@ -46,16 +33,12 @@
    - 访问 [安全信息](https://account.microsoft.com/security)
    - 生成应用密码并使用它代替普通密码
 
-### 2. 企业微信配置
+### 2. Webhook配置
 
-1. 在企业微信群中添加机器人
-2. 复制机器人的Webhook地址
+1. 支持钉钉、飞书、企业微信机器人和PushMe
+2. 前面几个需要企业认证，推荐使用[PushMe](https://push.i-i.me/)
 
 ### 3. 环境变量配置
-
-有两种方式配置环境变量：
-
-#### 方式一：本地开发使用 `.env` 文件
 
 创建 `.env` 文件，填入以下信息：
 ```
@@ -71,22 +54,12 @@ QQ_PASSWORDS=password1,password2
 OUTLOOK_EMAILS=user1@outlook.com,user2@outlook.com
 OUTLOOK_PASSWORDS=password1,password2
 
-# 微信机器人配置
-WEIXIN_WEBHOOK=企业微信机器人的Webhook地址
+# Webhook配置
+WEIXIN_WEBHOOK=Webhook地址
 
 # 安全配置
 API_KEY=自定义的API密钥（用于手动触发检查）
 ```
-
-#### 方式二：Vercel部署使用环境变量（推荐）
-
-在Vercel部署时，建议使用Vercel的环境变量功能：
-
-1. 在Vercel项目设置中找到"Environment Variables"
-2. 添加上述相同的环境变量
-3. 可以为不同环境（Production/Preview/Development）设置不同的值
-4. 环境变量会被加密存储，更安全
-
 #### 环境变量说明
 
 1. 邮箱配置格式：
@@ -101,7 +74,6 @@ API_KEY=自定义的API密钥（用于手动触发检查）
 
 3. 安全建议：
    - 不要将 `.env` 文件提交到代码仓库
-   - 在生产环境使用Vercel的环境变量
    - 定期更换API_KEY
    - 建议对每个邮箱使用单独的应用密码
 
@@ -119,23 +91,41 @@ API_KEY=自定义的API密钥（用于手动触发检查）
    DEBUG=false
    ```
 
-### 4. Vercel部署
+### 4. 服务器部署
 
-1. 安装Vercel CLI：
+1. 上传 main.py、.env、requirements.txt到服务器，最好新建一个文件夹，比如mail
+
+2. 部署项目：
 ```bash
-npm i -g vercel
+cd /root/mail
+sudo apt install python3.10-venv
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-2. 登录Vercel：
+3. 配置systemd ：
+创建文件/etc/systemd/system/mail.service
 ```bash
-vercel login
-```
+[Unit]
+Description=FastAPI Application
+After=network.target
 
-3. 部署项目：
+[Service]
+User=root
+WorkingDirectory=/root/mail
+EnvironmentFile=/root/mail/.env
+ExecStart=/root/mail/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+
+[Install]
+WantedBy=multi-user.target
+```
+4. 启动项目
 ```bash
-vercel
+sudo systemctl daemon-reload
+sudo systemctl start mail
+sudo systemctl enable mail
 ```
-
 ### 5. 定时任务配置
 
 使用 [cron-job.org](https://cron-job.org) 设置定时触发：
@@ -147,24 +137,12 @@ vercel
    - 超时时间：默认值即可
    - 失败重试：建议开启，最多重试2次
 
+
 > 关于检查频率的说明：
 > - 建议设置为5分钟，这样每月约8,640次请求
-> - Vercel免费版每月限制100,000次请求
-> - 设置过短的间隔（如1分钟）会快速消耗免费额度
 > - 过于频繁的请求可能触发邮箱服务器的限制
 
-### 6. Vercel免费额度说明
-
-Vercel的免费计划（Hobby Plan）包含：
-- 每月100,000次函数调用
-- 每个函数最长执行时间10秒
-- 每月100GB带宽
-
-以5分钟检查一次计算：
-- 每小时12次请求
-- 每天288次请求
-- 每月约8,640次请求
-- 占用免费额度约8.6%
+不一定要用这个，宝塔 1panel 青龙都可以
 
 ## API接口说明
 
